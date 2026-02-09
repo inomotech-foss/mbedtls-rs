@@ -3,6 +3,7 @@ use std::process::Command;
 
 use anyhow::{anyhow, Result};
 use bindgen::Builder;
+use build_rs::output::metadata;
 use cmake::Config;
 use enumset::{EnumSet, EnumSetType};
 
@@ -249,6 +250,10 @@ impl MbedtlsBuilder {
         }
 
         config.build();
+
+
+        let include_dir = target_dir.join("include");
+        metadata("include", &include_dir.display().to_string());
 
         Ok(lib_dir.to_path_buf())
     }
