@@ -41,6 +41,9 @@ fn main() -> Result<()> {
         }
     }
 
+    let include_dir = crate_root_path.join("mbedtls").join("include");
+    println!("cargo::metadata=include={}", include_dir.display());
+
     let dirs = if pregen_bindings && pregen_bindings_rs_file.exists() && removed_hooks.is_empty() {
         // Use the pre-generated bindings
         Some((pregen_bindings_rs_file, pregen_libs_dir))
