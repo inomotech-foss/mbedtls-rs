@@ -1,10 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use self::config::MbedtlsConfig;
 use anyhow::{anyhow, Result};
 use bindgen::Builder;
 use cmake::Config;
 use enumset::{EnumSet, EnumSetType};
+
+mod config;
 
 /// What hooks to install in MbedTLS
 #[derive(EnumSetType, Debug)]
@@ -17,6 +20,61 @@ pub enum Hook {
     Sha512,
     /// MPI modular exponentiation
     ExpMod,
+}
+
+impl Hook {
+    const fn work_area_size(self) -> Option<usize> {
+        match self {
+            Self::Sha1 => Some(208),
+            Self::Sha256 => Some(208),
+            Self::Sha512 => Some(304),
+            Self::ExpMod => None,
+        }
+    }
+
+    /// Returns the header name that MbedTLS expects for this hook, if any.
+    ///
+    /// These header names are hard-coded in MbedTLS.
+    /// We cannot change them to make them less ambiguous.
+    const fn header_name(self) -> Option<&'static str> {
+        match self {
+            Self::Sha1 => Some("sha1_alt.h"),
+            Self::Sha256 => Some("sha256_alt.h"),
+            Self::Sha512 => Some("sha512_alt.h"),
+            Self::ExpMod => None,
+        }
+    }
+
+    /// Returns the config identifier corresponding to this hook.
+    const fn config_ident(self) -> &'static str {
+        match self {
+            Self::Sha1 => "SHA1_ALT",
+            Self::Sha256 => "SHA256_ALT",
+            Self::Sha512 => "SHA512_ALT",
+            Self::ExpMod => "MPI_EXP_MOD_ALT_FALLBACK",
+        }
+    }
+
+    fn apply_to_config(self, config: &mut MbedtlsConfig) {
+        config.set(self.config_ident(), true);
+        if let Some(work_area_size) = self.work_area_size() {
+            // This is not relevant for MbedTLS itself, but our
+            // implementation needs to know the work area size.
+            let size_ident = format!("{}_WORK_AREA_SIZE", self.config_ident());
+            config.add(&size_ident, work_area_size.to_string());
+        }
+    }
+}
+
+/// Compilation artifacts.
+///
+/// Returned by [`MbedtlsBuilder::compile`].
+pub struct MbedtlsArtifacts {
+    /// Include directory containing the MbedTLS headers.
+    pub include: PathBuf,
+    /// Directory containing the compiled MbedTLS libraries to link against.
+    #[allow(unused, reason = "xtask doesn't use this")]
+    pub libraries: PathBuf,
 }
 
 /// The MbedTLS builder
@@ -79,9 +137,14 @@ impl MbedtlsBuilder {
     ///
     /// Arguments:
     /// - `out_path`: Path to write the bindings to
+    /// - `include_dir`: Path to the directory containing the MbedTLS headers
+    ///   to generate bindings for.
+    /// - `copy_file_path`: Optional path to copy the generated bindings to
+    ///   (e.g. for caching or pre-generation purposes)
     pub fn generate_bindings(
         &self,
         out_path: &Path,
+        include_dir: &Path,
         copy_file_path: Option<&Path>,
     ) -> Result<PathBuf> {
         log::info!("Generating MbedTLS bindings");
@@ -125,16 +188,7 @@ impl MbedtlsBuilder {
                     .join("include.h")
                     .to_string_lossy(),
             )
-            .clang_args([
-                &format!(
-                    "-I{}",
-                    canon(&self.crate_root_path.join("mbedtls").join("include"))
-                ),
-                &format!(
-                    "-I{}",
-                    canon(&self.crate_root_path.join("gen").join("include"))
-                ),
-            ]);
+            .clang_arg(format!("-I{}", canon(include_dir)));
 
         if self.short_enums() {
             builder = builder.clang_arg("-fshort-enums");
@@ -153,16 +207,6 @@ impl MbedtlsBuilder {
 
         if let Some(target) = &self.clang_target {
             builder = builder.clang_arg(format!("--target={target}"));
-        }
-
-        for hook in self.hooks {
-            let def = self.hook_def(hook);
-
-            builder = builder.clang_arg(format!("-D{def}"));
-
-            if let Some(size_def) = self.hook_work_area_size_def(hook) {
-                builder = builder.clang_arg(format!("-D{def}_WORK_AREA_SIZE={size_def}"));
-            }
         }
 
         let bindings = builder
@@ -191,13 +235,86 @@ impl MbedtlsBuilder {
         Ok(bindings_file)
     }
 
-    /// Compile mbedtls
+    /// Generates the MbedTLS config header and writes it to the specified path.
+    pub fn generate_config(&self, out_file: &Path) -> Result<()> {
+        let config_source_path = self
+            .cmake_configurer
+            .project_path
+            .join("include/mbedtls/mbedtls_config.h");
+        let mut config = MbedtlsConfig::load_from_header(&config_source_path)?;
+        // HACK: For some reason the 'MPI_EXP_MOD_ALT_FALLBACK' config option
+        //       is missing in the `mbedtls_config.h` file, but it's used in
+        //       `bignum.c`.
+        config.add("MPI_EXP_MOD_ALT_FALLBACK", false);
+
+        config
+            .set("DEPRECATED_REMOVED", true)
+            .set("HAVE_TIME", false)
+            .set("HAVE_TIME_DATE", false)
+            .set("PLATFORM_MEMORY", true)
+            // We want to provide our own Rust-backed zeroization function.
+            .set("PLATFORM_ZEROIZE_ALT", true)
+            .set("AES_ROM_TABLES", true)
+            .set("PK_PARSE_EC_COMPRESSED", false)
+            .set("GENPRIME", false)
+            .set("FS_IO", false)
+            .set("NO_PLATFORM_ENTROPY", true)
+            .set("PSA_CRYPTO_EXTERNAL_RNG", true)
+            .set("PSA_KEY_STORE_DYNAMIC", false)
+            .set("SSL_KEYING_MATERIAL_EXPORT", false)
+            .set("AESNI_C", false)
+            .set("AESCE_C", false)
+            .set("NET_C", false)
+            .set("PSA_CRYPTO_STORAGE_C", false)
+            .set("PSA_ITS_FILE_C", false)
+            .set("SHA3_C", false)
+            .set("TIMING_C", false);
+
+        self.hooks
+            .iter()
+            .for_each(|hook| hook.apply_to_config(&mut config));
+
+        config.write_to_path(out_file)?;
+        Ok(())
+    }
+
+    /// Compile MbedTLS.
+    ///
+    /// Uses CMake to compile MbedTLS and prepares the headers for consumption
+    /// by bindgen and other crates.
+    /// The tricky part is the MbedTLS configuration. In a CMake-based world,
+    /// MbedTLS uses "public" compile definitions to bubble up the external
+    /// config file as well as other relevant configuration options.
+    /// This simply doesn't work well when using Cargo. To make everyone's life
+    /// easier, we manually patch up the headers after compiling MbedTLS such
+    /// that no other compile definitions are necessary when consuming the
+    /// generated libraries and headers.
     ///
     /// Arguments:
     /// - `out_path`: Path to write the compiled libraries to
-    pub fn compile(&self, out_path: &Path, copy_path: Option<&Path>) -> Result<PathBuf> {
+    pub fn compile(&self, out_path: &Path, copy_path: Option<&Path>) -> Result<MbedtlsArtifacts> {
+        // This directory is temporarily added to the include path when
+        // compiling MbedTLS. Afterwards, we merge it into MbedTLS's include
+        // directory for consumption by downstream crates.
+        let mut staging_include_dir =
+            StagingIncludeDirectory::new(out_path.join("staging").join("include"))?;
+
+        let config_file_path = staging_include_dir.path.join("mbedtls_rs_sys_config.h");
+        self.generate_config(&config_file_path)?;
+        // We want our generated config file to fully replace MbedTLS's default
+        // config file.
+        staging_include_dir.track(&config_file_path, "mbedtls/mbedtls_config.h");
+
+        // Copy all the relevant hook headers to the staging include directory.
+        let hook_header_dir = self.crate_root_path.join("gen").join("hook");
+        self.hooks
+            .iter()
+            .filter_map(|hook| hook.header_name())
+            .try_for_each(|name| staging_include_dir.add(hook_header_dir.join(name)))?;
+
         let target_dir = out_path.join("mbedtls").join("build");
         std::fs::create_dir_all(&target_dir)?;
+        let target_include_dir = target_dir.join("include");
 
         let target_lib_dir = out_path.join("mbedtls").join("lib");
 
@@ -217,61 +334,27 @@ impl MbedtlsBuilder {
             .define("CMAKE_EXPORT_COMPILE_COMMANDS", "ON")
             // Clang will complain about some documentation formatting in mbedtls
             .define("MBEDTLS_FATAL_WARNINGS", "OFF")
-            .define(
-                "MBEDTLS_CONFIG_FILE",
-                self.crate_root_path
-                    .join("gen")
-                    .join("include")
-                    .join("config.h"),
-            )
-            .cflag(format!(
-                "-I{}",
-                self.crate_root_path.join("gen").join("include").display()
-            ))
-            .cflag("-DMBEDTLS_CONFIG_FILE='<config.h>'")
-            .cxxflag("-DMBEDTLS_CONFIG_FILE='<config.h>'")
+            .define("MBEDTLS_CONFIG_FILE", config_file_path)
+            .cflag(format!("-I{}", staging_include_dir.path.display()))
             .profile("Release")
             .out_dir(&target_dir);
 
-        for hook in self.hooks {
-            let def = self.hook_def(hook);
-
-            config.cflag(format!("-D{def}")).cxxflag(format!("-D{def}"));
-
-            if let Some(size_def) = self.hook_work_area_size_def(hook) {
-                config
-                    .cflag(format!("-D{def}_WORK_AREA_SIZE={size_def}"))
-                    .cxxflag(format!("-D{def}_WORK_AREA_SIZE={size_def}"));
-            }
-        }
-
         config.build();
 
-        Ok(lib_dir.to_path_buf())
+        // Now that MbedTLS is compiled, we merge the staging include
+        // directory into its include directory.
+        staging_include_dir.merge_into(&target_include_dir)?;
+
+        Ok(MbedtlsArtifacts {
+            include: target_include_dir,
+            libraries: lib_dir.to_path_buf(),
+        })
     }
 
     /// Re-run the build script if the file or directory has changed.
     #[allow(unused)]
     pub fn track(file_or_dir: &Path) {
         println!("cargo::rerun-if-changed={}", file_or_dir.display())
-    }
-
-    fn hook_def(&self, hook: Hook) -> &'static str {
-        match hook {
-            Hook::Sha1 => "MBEDTLS_SHA1_ALT",
-            Hook::Sha256 => "MBEDTLS_SHA256_ALT",
-            Hook::Sha512 => "MBEDTLS_SHA512_ALT",
-            Hook::ExpMod => "MBEDTLS_MPI_EXP_MOD_ALT_FALLBACK",
-        }
-    }
-
-    fn hook_work_area_size_def(&self, hook: Hook) -> Option<usize> {
-        match hook {
-            Hook::Sha1 => Some(208),
-            Hook::Sha256 => Some(208),
-            Hook::Sha512 => Some(304),
-            _ => None,
-        }
     }
 
     /// A heuristics (we don't have anything better) to signal to `bindgen` whether the GCC toolchain
@@ -283,6 +366,81 @@ impl MbedtlsBuilder {
         let target = std::env::var("TARGET").unwrap();
 
         target.ends_with("-eabi") || target.ends_with("-eabihf")
+    }
+}
+
+/// Helper for managing the staging include directory used when compiling MbedTLS.
+struct StagingIncludeDirectory {
+    /// Path to the staging include directory.
+    path: PathBuf,
+    // List of (source, destination) pairs of files to copy to the staging
+    // include directory.
+    // The source is always relative to `path` and the destination is relative
+    // to the final include directory path.
+    files: Vec<(PathBuf, PathBuf)>,
+}
+
+impl StagingIncludeDirectory {
+    fn new(path: PathBuf) -> Result<Self> {
+        std::fs::create_dir_all(&path)?;
+        Ok(Self {
+            path,
+            files: Vec::new(),
+        })
+    }
+
+    /// Merges the staging include directory into the final include directory.
+    ///
+    /// This should be called after MbedTLS is compiled, and the final include
+    /// directory is ready to be consumed by downstream crates.
+    fn merge_into(&self, include_dir: &Path) -> Result<()> {
+        for (rel_src, rel_dest) in &self.files {
+            let dest = include_dir.join(rel_dest);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let src = self.path.join(rel_src);
+            std::fs::copy(src, dest)?;
+        }
+        Ok(())
+    }
+
+    /// Adds an external file to be tracked and copied.
+    ///
+    /// The file will be copied into the staging include directory under the
+    /// same name. When merged, the file will be copied to the final include
+    /// directory, again under the same name.
+    ///
+    /// # Panics
+    ///
+    /// If `source` is not a path containing a file name.
+    fn add(&mut self, source: impl AsRef<Path>) -> Result<()> {
+        let source = source.as_ref();
+        let source_file_name = source.file_name().expect("'source' must have a file name");
+        let staging_path = self.path.join(source_file_name);
+        std::fs::copy(source, &staging_path)?;
+        self.track(staging_path, source_file_name);
+        Ok(())
+    }
+
+    /// Tracks a file to be copied from the staging directory into the final
+    /// include directory.
+    ///
+    /// # Panics
+    ///
+    /// If `source` is not within the staging include directory, or if
+    /// `destination` is not a relative path.
+    fn track(&mut self, source: impl AsRef<Path>, destination: impl AsRef<Path>) {
+        let source = source
+            .as_ref()
+            .strip_prefix(&self.path)
+            .expect("'source' must be within the staging include directory");
+        let destination = destination.as_ref();
+        if destination.is_absolute() {
+            panic!("'destination' must be a relative path");
+        }
+        self.files
+            .push((source.to_path_buf(), destination.to_path_buf()));
     }
 }
 

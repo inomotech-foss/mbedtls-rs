@@ -74,10 +74,10 @@ fn main() -> Result<()> {
             force_esp_riscv_gcc,
         );
 
-        let libs_dir = builder.compile(&out, None)?;
-        let bindings = builder.generate_bindings(&out, None)?;
+        let artifacts = builder.compile(&out, None)?;
+        let bindings = builder.generate_bindings(&out, &artifacts.include, None)?;
 
-        Some((bindings, libs_dir))
+        Some((bindings, artifacts.libraries))
     };
 
     if let Some((bindings, libs_dir)) = dirs {
