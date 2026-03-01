@@ -17,16 +17,18 @@ name: CI
 on:
   pull_request:
     branches:
-      - main
+    - main
     types:
-      - opened
-      - synchronize
-      - reopened
-      - labeled
+    - opened
+    - synchronize
+    - reopened
+    - labeled
   push:
     branches:
-      - main
+    - main
+    - feat/expose-headers
   workflow_dispatch:
+
 
 env:
   CARGO_TERM_COLOR: always
@@ -47,41 +49,41 @@ jobs:
     permissions: read-all
 
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: mbedtls init
-        run: git submodule update --init --recursive
+    - name: mbedtls init
+      run: git submodule update --init --recursive
 
-      - uses: dtolnay/rust-toolchain@v1
-        with:
-          target: x86_64-unknown-linux-gnu
-          toolchain: stable
-          components: rust-src,rustfmt
+    - uses: dtolnay/rust-toolchain@v1
+      with:
+        target: x86_64-unknown-linux-gnu
+        toolchain: stable
+        components: rust-src,rustfmt
 
-      # TODO: Double-check and uncomment
-      # - uses: Swatinem/rust-cache@v2
-      #   with:
-      #     workspaces: |
-      #       ./
-      #       xtask
+    # TODO: Double-check and uncomment
+    # - uses: Swatinem/rust-cache@v2
+    #   with:
+    #     workspaces: |
+    #       ./
+    #       xtask
 
-      - name: Fmt Check
-        run: cargo fmt -- --check
+    - name: Fmt Check
+      run: cargo fmt -- --check
 
-      - name: Clippy
-        run: cargo clippy -- -D warnings
+    - name: Clippy
+      run: cargo clippy -- -D warnings
 
-      - name: Build
-        run: cargo build
+    - name: Build
+      run: cargo build
 
-      - name: Fmt Check - STD Examples
-        run: cd examples/std; cargo fmt -- --check
+    - name: Fmt Check - STD Examples
+      run: cd examples/std; cargo fmt -- --check
 
-      - name: Clippy - STD Examples
-        run: cd examples/std; cargo clippy -- -D warnings
+    - name: Clippy - STD Examples
+      run: cd examples/std; cargo clippy -- -D warnings
 
-      - name: Build - STD Examples
-        run: cd examples/std; cargo build
+    - name: Build - STD Examples
+      run: cd examples/std; cargo build
 
   build-mbedtls:
     name: Build MbedTLS
@@ -92,90 +94,90 @@ jobs:
       upload-libs: ${{ steps.detect-changes.outputs.libs == 'true' }}
 
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: mbedtls init
-        run: git submodule update --init --recursive
+    - name: mbedtls init
+      run: git submodule update --init --recursive
 
-      - uses: dtolnay/rust-toolchain@v1
-        with:
-          target: x86_64-unknown-linux-gnu
-          toolchain: nightly
-          components: rust-src,rustfmt
+    - uses: dtolnay/rust-toolchain@v1
+      with:
+        target: x86_64-unknown-linux-gnu
+        toolchain: nightly
+        components: rust-src,rustfmt
 
-      # TODO: Double-check and uncomment
-      # - uses: Swatinem/rust-cache@v2
-      #   with:
-      #     workspaces: |
-      #       ./
-      #       xtask
+    # TODO: Double-check and uncomment
+    # - uses: Swatinem/rust-cache@v2
+    #   with:
+    #     workspaces: |
+    #       ./
+    #       xtask
 
-      - name: Detect mbedtls-rs-sys/ changes
-        uses: dorny/paths-filter@v3
-        id: detect-changes
-        with:
-          filters: |
-            libs:
-              - 'mbedtls-rs-sys/**'
+    - name: Detect mbedtls-rs-sys/ changes
+      uses: dorny/paths-filter@v3
+      id: detect-changes
+      with:
+        filters: |
+          libs:
+            - 'mbedtls-rs-sys/**'
 
-      - name: Detect host target triple
-        run: |
-          export HOST_TARGET=$(rustup show | grep "Default host" | sed -e 's/.* //')
-          echo "HOST_TARGET=$HOST_TARGET" >> $GITHUB_ENV
+    - name: Detect host target triple
+      run: |
+        export HOST_TARGET=$(rustup show | grep "Default host" | sed -e 's/.* //')
+        echo "HOST_TARGET=$HOST_TARGET" >> $GITHUB_ENV
 
-      - name: Install espup
-        run: |
-          curl -LO https://github.com/esp-rs/espup/releases/latest/download/espup-${{ env.HOST_TARGET }}.zip
-          unzip -o espup-${{ env.HOST_TARGET }}.zip -d "$HOME/.cargo/bin"
-          chmod +x "$HOME/.cargo/bin/espup"*
-          echo "ESPUP_EXPORT_FILE=$HOME/exports" >> $GITHUB_ENV
+    - name: Install espup
+      run: |
+        curl -LO https://github.com/esp-rs/espup/releases/latest/download/espup-${{ env.HOST_TARGET }}.zip
+        unzip -o espup-${{ env.HOST_TARGET }}.zip -d "$HOME/.cargo/bin"
+        chmod +x "$HOME/.cargo/bin/espup"*
+        echo "ESPUP_EXPORT_FILE=$HOME/exports" >> $GITHUB_ENV
 
-      - name: Install espup toolchains (xtensa and riscv)
-        run: |
-          source "$HOME/.cargo/env"
-          "$HOME/.cargo/bin/espup" install -e -r
-          source "$HOME/exports"
-          echo "${LIBCLANG_PATH}/../bin:$PATH" >> "$GITHUB_PATH"
-          echo "LIBCLANG_PATH=${LIBCLANG_PATH}" >> "$GITHUB_ENV"
-          echo "CLANG_PATH=${CLANG_PATH}" >> "$GITHUB_ENV"
-  
-# TODO: Remove the manual espup installation and run once the action below
-# supports the `-r` flag to install the Espressif RISCV GCC toolchain
-# See https://github.com/esp-rs/xtensa-toolchain/issues/45 for more info
-#      - name: Install Rust for Xtensa and Espressif LLVM installation (optional)
-#        uses: esp-rs/xtensa-toolchain@v1.6
-#        with:
-#          ldproxy: true
-#          override: false
-#          extended-llvm: ${{
-#            steps.detect-changes.outputs.libs == 'true' ||
-#            contains(github.event.pull_request.labels.*.name, 'rebuild-libs')
-#            }}
+    - name: Install espup toolchains (xtensa and riscv)
+      run: |
+        source "$HOME/.cargo/env"
+        "$HOME/.cargo/bin/espup" install -e -r
+        source "$HOME/exports"
+        echo "${LIBCLANG_PATH}/../bin:$PATH" >> "$GITHUB_PATH"
+        echo "LIBCLANG_PATH=${LIBCLANG_PATH}" >> "$GITHUB_ENV"
+        echo "CLANG_PATH=${CLANG_PATH}" >> "$GITHUB_ENV"
 
-      - name: Build MbedTLS libraries and bindings
-        if: |
-          steps.detect-changes.outputs.libs == 'true' ||
-          contains(github.event.pull_request.labels.*.name, 'rebuild-libs')
-        run: |
-          rm -rf mbedtls-rs-sys/libs/*
-          cargo +stable xtask gen xtensa-esp32-none-elf
-          cargo +stable xtask gen xtensa-esp32s2-none-elf
-          cargo +stable xtask gen xtensa-esp32s3-none-elf
-          cargo +stable xtask gen riscv32imc-unknown-none-elf
-          cargo +stable xtask gen riscv32imac-unknown-none-elf
+    # TODO: Remove the manual espup installation and run once the action below
+    # supports the `-r` flag to install the Espressif RISCV GCC toolchain
+    # See https://github.com/esp-rs/xtensa-toolchain/issues/45 for more info
+    #      - name: Install Rust for Xtensa and Espressif LLVM installation (optional)
+    #        uses: esp-rs/xtensa-toolchain@v1.6
+    #        with:
+    #          ldproxy: true
+    #          override: false
+    #          extended-llvm: ${{
+    #            steps.detect-changes.outputs.libs == 'true' ||
+    #            contains(github.event.pull_request.labels.*.name, 'rebuild-libs')
+    #            }}
 
-      - name: Upload libraries artifacts for commit
-        if: |
-          (steps.detect-changes.outputs.libs == 'true' &&
-          github.ref == 'refs/heads/main') ||
-          contains(github.event.pull_request.labels.*.name, 'rebuild-libs')
-        uses: actions/upload-artifact@v4
-        with:
-          name: mbedtls-rs-sys
-          retention-days: 1
-          path: |
-            mbedtls-rs-sys/libs
-            mbedtls-rs-sys/src
+    - name: Build MbedTLS libraries and bindings
+      if: |
+        steps.detect-changes.outputs.libs == 'true' ||
+        contains(github.event.pull_request.labels.*.name, 'rebuild-libs')
+      run: |
+        rm -rf mbedtls-rs-sys/libs/*
+        cargo +stable xtask gen xtensa-esp32-none-elf
+        cargo +stable xtask gen xtensa-esp32s2-none-elf
+        cargo +stable xtask gen xtensa-esp32s3-none-elf
+        cargo +stable xtask gen riscv32imc-unknown-none-elf
+        cargo +stable xtask gen riscv32imac-unknown-none-elf
+
+    - name: Upload libraries artifacts for commit
+      # if: |
+      #   (steps.detect-changes.outputs.libs == 'true' &&
+      #   github.ref == 'refs/heads/main') ||
+      #   contains(github.event.pull_request.labels.*.name, 'rebuild-libs')
+      uses: actions/upload-artifact@v4
+      with:
+        name: mbedtls-rs-sys
+        retention-days: 1
+        path: |
+          mbedtls-rs-sys/libs
+          mbedtls-rs-sys/src
 
   build-mcu:
     name: Build-MCU
@@ -186,55 +188,55 @@ jobs:
       fail-fast: false
       matrix:
         mcu:
-          - [esp, esp32, xtensa-esp32-none-elf]
-          - [esp, esp32s2, xtensa-esp32s2-none-elf]
-          - [esp, esp32s3, xtensa-esp32s3-none-elf]
-          - [esp, esp32c2, riscv32imc-unknown-none-elf]
-          - [esp, esp32c3, riscv32imc-unknown-none-elf]
-          - [esp, esp32c6, riscv32imac-unknown-none-elf]
-# No Wifi support on esp32h2
-#          - [esp, esp32h2, riscv32imac-unknown-none-elf]
+        - [ esp, esp32, xtensa-esp32-none-elf ]
+        - [ esp, esp32s2, xtensa-esp32s2-none-elf ]
+        - [ esp, esp32s3, xtensa-esp32s3-none-elf ]
+        - [ esp, esp32c2, riscv32imc-unknown-none-elf ]
+        - [ esp, esp32c3, riscv32imc-unknown-none-elf ]
+        - [ esp, esp32c6, riscv32imac-unknown-none-elf ]
+    # No Wifi support on esp32h2
+    #          - [esp, esp32h2, riscv32imac-unknown-none-elf]
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@v1
-        with:
-          target: x86_64-unknown-linux-gnu
-          toolchain: nightly
-          components: rust-src,rustfmt,clippy
+    - uses: dtolnay/rust-toolchain@v1
+      with:
+        target: x86_64-unknown-linux-gnu
+        toolchain: nightly
+        components: rust-src,rustfmt,clippy
 
-      - name: Install MCU target
-        if: startsWith(matrix.mcu[2], 'riscv32')
-        run: rustup target add ${{ matrix.mcu[2] }}
+    - name: Install MCU target
+      if: startsWith(matrix.mcu[2], 'riscv32')
+      run: rustup target add ${{ matrix.mcu[2] }}
 
-      - name: Install Rust for Xtensa
-        if: startsWith(matrix.mcu[2], 'xtensa-')
-        uses: esp-rs/xtensa-toolchain@v1.6
-        with:
-          default: true
-          ldproxy: true
+    - name: Install Rust for Xtensa
+      if: startsWith(matrix.mcu[2], 'xtensa-')
+      uses: esp-rs/xtensa-toolchain@v1.6
+      with:
+        default: true
+        ldproxy: true
 
-      # TODO: Double-check and uncomment
-      # - uses: Swatinem/rust-cache@v2
-      #   with:
-      #     workspaces: |
-      #       ./
-      #       xtask
+    # TODO: Double-check and uncomment
+    # - uses: Swatinem/rust-cache@v2
+    #   with:
+    #     workspaces: |
+    #       ./
+    #       xtask
 
-      - name: Clippy
-        run: cargo clippy --features accel-${{ matrix.mcu[1] }} --target ${{ matrix.mcu[2] }} -Zbuild-std=core,alloc,panic_abort -- -D warnings
+    - name: Clippy
+      run: cargo clippy --features accel-${{ matrix.mcu[1] }} --target ${{ matrix.mcu[2] }} -Zbuild-std=core,alloc,panic_abort -- -D warnings
 
-      - name: Build
-        run: cargo build --features accel-${{ matrix.mcu[1] }} --target ${{ matrix.mcu[2] }} -Zbuild-std=core,alloc,panic_abort
+    - name: Build
+      run: cargo build --features accel-${{ matrix.mcu[1] }} --target ${{ matrix.mcu[2] }} -Zbuild-std=core,alloc,panic_abort
 
-      - name: Fmt Check - Examples
-        run: cd examples/${{ matrix.mcu[0] }}; cargo fmt -- --check
+    - name: Fmt Check - Examples
+      run: cd examples/${{ matrix.mcu[0] }}; cargo fmt -- --check
 
-      - name: Clippy - Examples
-        run: export WIFI_SSID=ssid; export WIFI_PASS=pass; cd examples/${{ matrix.mcu[0] }}; cargo clippy --no-default-features --features ${{ matrix.mcu[1] }} --target ${{ matrix.mcu[2] }} -Zbuild-std=core,alloc,panic_abort -- -D warnings
+    - name: Clippy - Examples
+      run: export WIFI_SSID=ssid; export WIFI_PASS=pass; cd examples/${{ matrix.mcu[0] }}; cargo clippy --no-default-features --features ${{ matrix.mcu[1] }} --target ${{ matrix.mcu[2] }} -Zbuild-std=core,alloc,panic_abort -- -D warnings
 
-      - name: Build - Examples
-        run: export WIFI_SSID=ssid; export WIFI_PASS=pass; cd examples/${{ matrix.mcu[0] }}; cargo build --no-default-features --features ${{ matrix.mcu[1] }} --target ${{ matrix.mcu[2] }} -Zbuild-std=core,alloc,panic_abort
+    - name: Build - Examples
+      run: export WIFI_SSID=ssid; export WIFI_PASS=pass; cd examples/${{ matrix.mcu[0] }}; cargo build --no-default-features --features ${{ matrix.mcu[1] }} --target ${{ matrix.mcu[2] }} -Zbuild-std=core,alloc,panic_abort
 
   build-esp-idf:
     name: Build-ESP-IDF
@@ -245,55 +247,55 @@ jobs:
       fail-fast: false
       matrix:
         mcu:
-          - [std, esp32, xtensa-esp32-espidf]
-#          - [std, esp32s2, xtensa-esp32s2-espidf]
-          - [std, esp32s3, xtensa-esp32s3-espidf]
-#          - [std, esp32c2, riscv32imc-esp-espidf]
-#          - [std, esp32c3, riscv32imc-esp-espidf]
-#          - [std, esp32c6, riscv32imac-esp-espidf]
-# No Wifi support on esp32h2
-#          - [std, esp32h2, riscv32imac-esp-espidf]
+        - [ std, esp32, xtensa-esp32-espidf ]
+        #          - [std, esp32s2, xtensa-esp32s2-espidf]
+        - [ std, esp32s3, xtensa-esp32s3-espidf ]
+    #          - [std, esp32c2, riscv32imc-esp-espidf]
+    #          - [std, esp32c3, riscv32imc-esp-espidf]
+    #          - [std, esp32c6, riscv32imac-esp-espidf]
+    # No Wifi support on esp32h2
+    #          - [std, esp32h2, riscv32imac-esp-espidf]
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@v1
-        with:
-          target: x86_64-unknown-linux-gnu
-          toolchain: nightly
-          components: rust-src,rustfmt,clippy
+    - uses: dtolnay/rust-toolchain@v1
+      with:
+        target: x86_64-unknown-linux-gnu
+        toolchain: nightly
+        components: rust-src,rustfmt,clippy
 
-      - name: Install MCU target
-        if: startsWith(matrix.mcu[2], 'riscv32')
-        run: rustup target add ${{ matrix.mcu[2] }}
+    - name: Install MCU target
+      if: startsWith(matrix.mcu[2], 'riscv32')
+      run: rustup target add ${{ matrix.mcu[2] }}
 
-      - name: Install Rust for Xtensa
-        if: startsWith(matrix.mcu[2], 'xtensa-')
-        uses: esp-rs/xtensa-toolchain@v1.6
-        with:
-          default: true
-          ldproxy: true
+    - name: Install Rust for Xtensa
+      if: startsWith(matrix.mcu[2], 'xtensa-')
+      uses: esp-rs/xtensa-toolchain@v1.6
+      with:
+        default: true
+        ldproxy: true
 
-      # TODO: Double-check and uncomment
-      # - uses: Swatinem/rust-cache@v2
-      #   with:
-      #     workspaces: |
-      #       ./
-      #       xtask
+    # TODO: Double-check and uncomment
+    # - uses: Swatinem/rust-cache@v2
+    #   with:
+    #     workspaces: |
+    #       ./
+    #       xtask
 
-      - name: Clippy
-        run: cargo clippy --target ${{ matrix.mcu[2] }} -Zbuild-std=std,panic_abort -- -D warnings
+    - name: Clippy
+      run: cargo clippy --target ${{ matrix.mcu[2] }} -Zbuild-std=std,panic_abort -- -D warnings
 
-      - name: Build
-        run: cargo build --target ${{ matrix.mcu[2] }} -Zbuild-std=std,panic_abort
+    - name: Build
+      run: cargo build --target ${{ matrix.mcu[2] }} -Zbuild-std=std,panic_abort
 
-      - name: Fmt Check - Examples
-        run: cd examples/${{ matrix.mcu[0] }}; cargo fmt -- --check
+    - name: Fmt Check - Examples
+      run: cd examples/${{ matrix.mcu[0] }}; cargo fmt -- --check
 
-      - name: Clippy - Examples
-        run: export WIFI_SSID=ssid; export WIFI_PASS=pass; cd examples/${{ matrix.mcu[0] }}; cargo clippy --target ${{ matrix.mcu[2] }} -Zbuild-std=std,panic_abort -- -D warnings
+    - name: Clippy - Examples
+      run: export WIFI_SSID=ssid; export WIFI_PASS=pass; cd examples/${{ matrix.mcu[0] }}; cargo clippy --target ${{ matrix.mcu[2] }} -Zbuild-std=std,panic_abort -- -D warnings
 
-      - name: Build - Examples
-        run: export WIFI_SSID=ssid; export WIFI_PASS=pass; cd examples/${{ matrix.mcu[0] }}; cargo build --target ${{ matrix.mcu[2] }} -Zbuild-std=std,panic_abort
+    - name: Build - Examples
+      run: export WIFI_SSID=ssid; export WIFI_PASS=pass; cd examples/${{ matrix.mcu[0] }}; cargo build --target ${{ matrix.mcu[2] }} -Zbuild-std=std,panic_abort
 
   # If libraries are rebuilt and tests are successful, we upload them in a specific job
   # that has write access to prevent security breaches, and unwanted use of the token
@@ -310,29 +312,29 @@ jobs:
       github.ref == 'refs/heads/main') ||
       contains(github.event.pull_request.labels.*.name, 'rebuild-libs'))
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # In a pull request trigger, ref is required as GitHub Actions checks out in detached HEAD mode,
-          # meaning it doesn’t check out your branch by default.
-          ref: ${{ github.head_ref || github.ref_name }}
-          # When doing a pull request, we need to fetch the forked repository.
-          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+    - uses: actions/checkout@v4
+      with:
+        # In a pull request trigger, ref is required as GitHub Actions checks out in detached HEAD mode,
+        # meaning it doesn’t check out your branch by default.
+        ref: ${{ github.head_ref || github.ref_name }}
+        # When doing a pull request, we need to fetch the forked repository.
+        repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: mbedtls-rs-sys
-          # Required because else artifacts will be put into the base directory
-          path: mbedtls-rs-sys/
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: mbedtls-rs-sys
+        # Required because else artifacts will be put into the base directory
+        path: mbedtls-rs-sys/
 
-      - name: Commit and push libraries to ${{ github.head_ref || github.ref_name }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add mbedtls-rs-sys/libs
-          git add mbedtls-rs-sys/src
-          # Only commit and push when there are changes
-          git diff --cached --quiet || (
-            git commit -m "chore: auto-push built libraries"
-            git push
-          )
+    - name: Commit and push libraries to ${{ github.head_ref || github.ref_name }}
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add mbedtls-rs-sys/libs
+        git add mbedtls-rs-sys/src
+        # Only commit and push when there are changes
+        git diff --cached --quiet || (
+          git commit -m "chore: auto-push built libraries"
+          git push
+        )
