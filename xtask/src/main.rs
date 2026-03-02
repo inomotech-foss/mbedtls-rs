@@ -1,5 +1,5 @@
-use std::env;
 use std::path::PathBuf;
+use std::{env, fs};
 
 use anyhow::Result;
 
@@ -84,10 +84,8 @@ fn main() -> Result<()> {
 
         let out = TempDir::new("mbedtls-sys-libs")?;
 
-        let artifacts = builder.compile(
-            out.path(),
-            Some(&sys_crate_root_path.join("libs").join(&target)),
-        )?;
+        let vendored_lib_dir = sys_crate_root_path.join("libs").join(&target);
+        let artifacts = builder.compile(out.path(), Some(&vendored_lib_dir))?;
 
         let out = TempDir::new("mbedtls-sys-bindings")?;
 
@@ -100,6 +98,14 @@ fn main() -> Result<()> {
                     .join("include")
                     .join(format!("{target}.rs")),
             ),
+        )?;
+
+        // Remove the existing include dir and copy over the newly generated headers.
+        fs::remove_dir_all(&vendored_lib_dir.join("include")).ok();
+        fs_extra::copy_items(
+            &[artifacts.include],
+            &vendored_lib_dir,
+            &fs_extra::dir::CopyOptions::new(),
         )?;
     }
 
